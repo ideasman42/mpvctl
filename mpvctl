@@ -1,0 +1,295 @@
+#!/usr/bin/env python3
+"""
+Utility to control mpv from the command line.
+
+
+TIME FORMAT:
+   For commands that accept TIME, valid time literals include.
+
+   - ``10`` ten seconds.
+   - ``-10m`` minus 10 minutes.
+   - ``1.5h`` one and a half hours.
+   - ``01:32:02`` one hour, 32minutes and 2 seconds.
+"""
+# Originally based on https://github.com/Duncaen/mpvctl
+# Ported to Python3.
+
+import argparse
+import json
+import os
+import shutil
+import subprocess
+import sys
+
+from typing import (
+    Any,
+    Sequence,
+    Tuple,
+)
+
+# -----------------------------------------------------------------------------
+# Generic Utilities
+
+
+def time_string_parse(time_str: str) -> float:
+
+    try:
+        return float(time_str)
+    except Exception:
+        pass
+
+    is_negative = time_str.startswith("-")
+    if is_negative:
+        time_str = time_str[1:]
+
+    time_str_split = time_str.lower().split(":")
+    if len(time_str_split) > 3:
+        raise Exception(
+            "Expected HH:MM:SS format, received {:d} groups, no more than 3 supported!".format(len(time_str_split))
+        )
+
+    time_eval = 0.0
+    for i, arg in enumerate(reversed(time_str_split)):
+        n = len(arg)
+        while n > 0 and arg[n - 1].isalpha():
+            n -= 1
+        arg, arg_ext = arg[:n], arg[n:]
+
+        if arg_ext:
+            if arg_ext == "h":
+                mul = 60 * 60
+            elif arg_ext == "m":
+                mul = 60
+            elif arg_ext == "s":
+                mul = 1
+            else:
+                raise Exception("Unknown extension '{:s}', expected a value in ['h', 'm', 's'] (case-insensitive)!")
+        else:
+            if i == 0:
+                mul = 1
+            elif i == 1:
+                mul = 60
+            elif i == 2:
+                mul = 60 * 60
+            else:
+                raise Exception("Internal error")
+
+        time_eval += float(arg) * float(mul)
+
+    if is_negative:
+        time_eval = -time_eval
+
+    return time_eval
+
+
+def move_to_trash(filepath: str) -> None:
+    subprocess.check_call(["gio", "trash", filepath])
+
+
+# -----------------------------------------------------------------------------
+# MPV Generic Utilities
+
+SOCKET = "/tmp/mpvsocket"
+
+SOCKET_CMD: Tuple[str, ...] = ("",)
+if shutil.which("socat"):
+    SOCKET_CMD = ("socat", "-", SOCKET)
+elif shutil.which("nc"):
+    SOCKET_CMD = ("nc", "-U", "-N", SOCKET)
+else:
+    sys.stderr.write('Cannot find "socat" or "nc" on your $PATH.')
+    sys.exit(1)
+
+
+def socket_command(json_str: str) -> str:
+    from subprocess import PIPE
+
+    with subprocess.Popen(SOCKET_CMD, stdout=PIPE, stderr=PIPE, stdin=PIPE) as proc:
+        out, _err = proc.communicate(input=json_str.encode("utf-8"))
+    return out.decode("utf-8")
+
+
+def command(args: Sequence[str]) -> str:
+    # JSON preamble.
+    tosend = '{"command": [' + ", ".join(['"{:s}"'.format(a) for a in args]) + "]}\n"
+    return socket_command(tosend)
+
+
+def property_string_get(prop_id: str) -> Any:
+    """
+    accepted properties:
+       filename, idle-active, playlist-count, playlist-pos, playback-time,
+       playtime-remaining, time-remaining, percent-pos,
+       duration, volume.
+    """
+    json_str = '{{ "command": ["get_property_string", "{:s}"] }}\n'.format(prop_id)
+    result = socket_command(json_str)
+    result_dict = json.loads(result)
+    return result_dict["data"]
+
+
+# -----------------------------------------------------------------------------
+# MPV Controls
+
+
+def time_relative_set(time_delta: str) -> None:
+    time_curr = float(property_string_get("playback-time"))
+    time_delta_eval = time_string_parse(time_delta)
+
+    time_next = time_curr + time_delta_eval
+
+    json_str = '{{"command": ["set_property", "playback-time", {:f}]}}\n'.format(time_next)
+
+    # TODO: check result?
+    socket_command(json_str)
+
+
+def playlist_trash_current() -> None:
+
+    json_str = (
+        # Get the path (to delete).
+        '{"command": ["get_property_string", "path"]}\n'
+        # Remove the currently playing file.
+        '{"command": ["playlist-remove", "current"]}\n'
+    )
+
+    result_path, _result_remove = socket_command(json_str).rstrip("\n").split("\n")
+
+    result_dict = json.loads(result_path)
+    filepath = result_dict["data"]
+    move_to_trash(filepath)
+
+
+def playlist_files_add(files: Sequence[str], replace: bool) -> None:
+    for i, filepath in enumerate(files):
+        # Without this, it's not convenient to add files in the current directory for e.g.
+        # Which is common when passing * for e.g.
+        filepath = os.path.abspath(filepath)
+        command(("loadfile", filepath, "replace" if (replace and i == 0) else "append-play"))
+
+
+# -----------------------------------------------------------------------------
+# Sub-Parser Implementations
+
+
+def argparse_create_quit(subparsers: "argparse._SubParsersAction[argparse.ArgumentParser]") -> None:
+    subparse = subparsers.add_parser("quit", help="Quit the 'mpv' instance.")
+    subparse.set_defaults(func=lambda args: command(("quit",)))
+
+
+def argparse_create_play(subparsers: "argparse._SubParsersAction[argparse.ArgumentParser]") -> None:
+    subparse = subparsers.add_parser("play", help="Start playing.")
+    subparse.set_defaults(func=lambda args: command(("set", "pause", "yes")))
+
+
+def argparse_create_pause(subparsers: "argparse._SubParsersAction[argparse.ArgumentParser]") -> None:
+    subparse = subparsers.add_parser("pause", help="Stop playing.")
+    subparse.set_defaults(func=lambda args: command(("set", "pause", "no")))
+
+
+def argparse_create_play_pause(subparsers: "argparse._SubParsersAction[argparse.ArgumentParser]") -> None:
+    subparse = subparsers.add_parser("play-pause", help="Toggle between play & pause.")
+    subparse.set_defaults(func=lambda args: command(("cycle", "pause")))
+
+
+def argparse_create_next(subparsers: "argparse._SubParsersAction[argparse.ArgumentParser]") -> None:
+    subparse = subparsers.add_parser("next", help="Play the next item in the playlist.")
+    subparse.set_defaults(func=lambda args: command(("playlist_next",)))
+
+
+def argparse_create_prev(subparsers: "argparse._SubParsersAction[argparse.ArgumentParser]") -> None:
+    subparse = subparsers.add_parser("prev", help="Play the previous item in the playlist.")
+    subparse.set_defaults(func=lambda args: command(("playlist_prev",)))
+
+
+def argparse_create_seek(subparsers: "argparse._SubParsersAction[argparse.ArgumentParser]", is_help: bool) -> None:
+    subparse = subparsers.add_parser(
+        "seek",
+        # Dummy prefix chars! Needed so `-10s` isn't seen as an argument.
+        prefix_chars="-" if is_help else "_",
+        help="Seek relative to the current playback position.",
+    )
+    subparse.add_argument(
+        dest="time_delta",
+        metavar="TIME",
+        help="Time string (see TIME format)",
+    )
+    subparse.set_defaults(func=lambda args: time_relative_set(args.time_delta))
+
+
+def argparse_create_add(subparsers: "argparse._SubParsersAction[argparse.ArgumentParser]") -> None:
+    subparse = subparsers.add_parser("add", help="Add file(s) to the playlist.")
+    subparse.add_argument(
+        "--replace",
+        dest="replace",
+        default=False,
+        action="store_true",
+        required=False,
+        help="Replace the current playlist instead of adding to the current playlist.",
+    )
+    subparse.add_argument(
+        dest="files",
+        nargs="+",
+        metavar="FILES",
+        help="One or more file-paths, with support for paths relative to the current working directory.",
+    )
+    subparse.set_defaults(func=lambda args: playlist_files_add(args.files, args.replace))
+
+
+def argparse_create_trash_current(subparsers: "argparse._SubParsersAction[argparse.ArgumentParser]") -> None:
+    subparse = subparsers.add_parser(
+        "trash-current",
+        help="Move the file that is currently playing to the trash.",
+    )
+    subparse.set_defaults(func=lambda args: playlist_trash_current())
+
+
+# -----------------------------------------------------------------------------
+# Argument Parser
+
+
+def argparse_create(is_help: bool) -> argparse.ArgumentParser:
+    parser = argparse.ArgumentParser(
+        description=__doc__,
+        formatter_class=argparse.RawTextHelpFormatter,
+    )
+
+    subparsers = parser.add_subparsers(
+        title="subcommands",
+        description="valid sub-commands",
+        help="additional help",
+    )
+    argparse_create_quit(subparsers)
+    argparse_create_pause(subparsers)
+    argparse_create_play(subparsers)
+    argparse_create_play_pause(subparsers)
+    argparse_create_next(subparsers)
+    argparse_create_prev(subparsers)
+
+    argparse_create_seek(subparsers, is_help)
+
+    argparse_create_add(subparsers)
+    argparse_create_trash_current(subparsers)
+
+    return parser
+
+
+# -----------------------------------------------------------------------------
+# Main Function
+
+
+def main() -> None:
+    is_help = "--help" in sys.argv
+    parser = argparse_create(is_help)
+    args = parser.parse_args()
+
+    # call subparser callback
+    if not hasattr(args, "func"):
+        parser.print_help()
+        return
+
+    args.func(args)
+
+
+if __name__ == "__main__":
+    main()
