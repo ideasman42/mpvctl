@@ -23,6 +23,8 @@ import sys
 
 from typing import (
     Any,
+    Dict,
+    Generator,
     Sequence,
     Tuple,
 )
@@ -132,20 +134,19 @@ def property_string_get(prop_id: str) -> Any:
 # MPV Controls
 
 
-def time_relative_set(time_delta: str) -> None:
-    time_curr = float(property_string_get("playback-time"))
-    time_delta_eval = time_string_parse(time_delta)
-
-    time_next = time_curr + time_delta_eval
-
-    json_str = '{{"command": ["set_property", "playback-time", {:f}]}}\n'.format(time_next)
-
+def playback_time_set(time: float) -> None:
+    json_str = '{{"command": ["set_property", "playback-time", {:f}]}}\n'.format(time)
     # TODO: check result?
     socket_command(json_str)
 
 
-def playlist_trash_current() -> None:
+def cmd_seek(time_delta: str) -> None:
+    time_curr = float(property_string_get("playback-time"))
+    time_delta_eval = time_string_parse(time_delta)
+    playback_time_set(time_curr + time_delta_eval)
 
+
+def cmd_trash_current() -> None:
     json_str = (
         # Get the path (to delete).
         '{"command": ["get_property_string", "path"]}\n'
@@ -162,14 +163,233 @@ def playlist_trash_current() -> None:
 
 def playlist_files_add(files: Sequence[str], replace: bool) -> None:
     for i, filepath in enumerate(files):
-        # Without this, it's not convenient to add files in the current directory for e.g.
-        # Which is common when passing * for e.g.
-        filepath = os.path.abspath(filepath)
         command(("loadfile", filepath, "replace" if (replace and i == 0) else "append-play"))
+
+
+def cmd_add(files: Sequence[str], replace: bool) -> None:
+    # Without this, it's not convenient to add files in the current directory for e.g.
+    # Which is common when passing `*` for e.g.
+    files = [os.path.abspath(filepath) for filepath in files]
+    playlist_files_add(files, replace)
+
+
+def playlist_index_set(index: int) -> None:
+    json_str = '{{"command": ["playlist-play-index", {:d}]}}\n'.format(index)
+    socket_command(json_str)
+
+
+# -----------------------------------------------------------------------------
+# MPV Stash Push Pop
+
+STASH_DIR = os.path.expanduser("~/.local/share/mpvctl/stash")
+STASH_BASE = "mpv_stash_"
+STASH_EXT = ".pickle"
+
+
+def stash_unique_time_hex() -> str:
+    import datetime
+
+    return hex(int((datetime.datetime.utcnow() - datetime.datetime(2020, 1, 1)).total_seconds() * 100))[2:]
+
+
+def is_hex(text: str) -> bool:
+    import string
+
+    return all(c in string.hexdigits for c in text)
+
+
+def stash_filename_create() -> str:
+    return os.path.join(STASH_DIR, STASH_BASE) + stash_unique_time_hex() + STASH_EXT
+
+
+def stash_description_create(
+    playlist_files: Sequence[str], playlist_index: int, playback_time: float, playback_duration: float, media_title: str
+) -> str:
+    """
+    Create a human readable description of this stash.
+    """
+
+    if len(playlist_files) > 1:
+        commonpath = os.path.commonpath(playlist_files)
+    else:
+        commonpath = os.path.dirname(playlist_files[0])
+
+    # TODO: abbreviate mount points?
+    # For now only expand home dir.
+
+    userdir = os.path.expanduser("~").rstrip(os.sep)
+    if commonpath.startswith(userdir):
+        commonpath = "~" + commonpath[len(userdir) :]
+
+    # Only include the track number when not playing a single file.
+    if len(playlist_files) > 1:
+        track_str = ", track:{:d}".format(playlist_index)
+    else:
+        track_str = ""
+
+    return '[{:s}] {:d}%{:s} in "{:s}"'.format(
+        media_title,
+        int((playback_time / playback_duration) * 100.0),
+        track_str,
+        commonpath,
+    )
+
+
+StashType = Dict[str, Any]
+
+
+def stash_file_read(filepath: str) -> StashType:
+    import pickle
+
+    with open(filepath, "rb") as fh:
+        manifest: StashType = pickle.load(fh)
+    return manifest
+
+
+def stash_file_write(filepath: str, data: StashType) -> None:
+    import pickle
+
+    with open(filepath, "wb") as fh:
+        pickle.dump(data, fh)
+
+
+def stash_iter_with_internal_num() -> Generator[Tuple[int, str], None, None]:
+    if os.path.exists(STASH_DIR):
+        for entry in os.scandir(STASH_DIR):
+            name = entry.name
+            if name.startswith(STASH_BASE) and name.endswith(STASH_EXT):
+                num = name[len(STASH_BASE) : -len(STASH_EXT)]
+                if is_hex(num):
+                    yield int(num, 16), entry.path
+
+
+def stash_iter_with_index() -> Generator[Tuple[int, str], None, None]:
+    for index, (_num_val, path) in enumerate(sorted(stash_iter_with_internal_num(), reverse=True)):
+        yield index, path
+
+
+def cmd_stash_list() -> None:
+    print("Stash list:")
+    for index, path in stash_iter_with_index():
+        stash_data = stash_file_read(path)
+        print(" ", index, stash_data["description"])
+
+
+def cmd_stash_push() -> None:
+    # Hypothetically the file could already exist, in practice this means stashing twice in 1/100th of a second.
+    import time
+
+    while os.path.exists(filepath := stash_filename_create()):
+        time.sleep(0.01)
+
+    result = socket_command(
+        '{"command": ["get_property", "playlist"]}\n'
+        '{"command": ["get_property", "playlist-pos"]}\n'
+        '{"command": ["get_property", "playback-time"]}\n'
+        '{"command": ["get_property", "duration"]}\n'
+        '{"command": ["get_property", "media-title"]}\n'
+    ).split("\n")[
+        0:5
+    ]  # There will be a trailing newline, ignore that.
+
+    result_dict = json.loads(result[0])
+    playlist_files = [item["filename"] for item in result_dict["data"]]
+
+    result_dict = json.loads(result[1])
+    playlist_index = result_dict["data"]
+
+    result_dict = json.loads(result[2])
+    playback_time = result_dict["data"]
+
+    result_dict = json.loads(result[3])
+    playback_duration = result_dict["data"]
+
+    result_dict = json.loads(result[4])
+    media_title = result_dict["data"]
+
+    stash_data = {
+        "description": stash_description_create(
+            playlist_files,
+            playlist_index,
+            playback_time,
+            playback_duration,
+            media_title,
+        ),
+        "files": playlist_files,
+        "playlist-pos": playlist_index,
+        "playback-time": playback_time,
+    }
+
+    if not os.path.exists(STASH_DIR):
+        os.makedirs(STASH_DIR)
+
+    stash_file_write(filepath, stash_data)
+
+
+def stash_pop_impl(index: int, play: bool = True, remove: bool = True) -> None:
+    """
+    Stash pop: play=True, remove=True
+    Stash peek: play=True, remove=False
+    Stash drop: play=False, remove=True
+    """
+    import time
+
+    filepath = ""
+    for index_iter, path in stash_iter_with_index():
+        if index_iter == index:
+            filepath = path
+            break
+
+    if filepath:
+        if play:
+            stash_data = stash_file_read(filepath)
+            description = stash_data["description"]
+            print("Pop", description)
+
+            playlist_files = stash_data["files"]
+            playlist_index = stash_data["playlist-pos"]
+            playback_time = stash_data["playback-time"]
+
+            command(("set", "pause", "yes"))
+            command(("set", "ao-mute", "yes"))
+            playlist_files_add(playlist_files, True)
+            time.sleep(0.35)
+            playlist_index_set(playlist_index)
+            time.sleep(0.35)
+            playback_time_set(playback_time)
+            command(("set", "ao-mute", "no"))
+            command(("set", "pause", "no"))
+        if remove:
+            os.remove(filepath)
+        return
+
+    if index != -1:
+        print("Stash {:d} does not exist!".format(index))
+    else:
+        print("No stashes left!")
+
+
+def cmd_stash_pop(index: int) -> None:
+    stash_pop_impl(index, play=True, remove=True)
+
+
+def cmd_stash_peek(index: int) -> None:
+    stash_pop_impl(index, play=True, remove=False)
+
+
+def cmd_stash_drop(index: int) -> None:
+    stash_pop_impl(index, play=False, remove=True)
 
 
 # -----------------------------------------------------------------------------
 # Sub-Parser Implementations
+
+
+def ensure_non_negative_int(value: str) -> int:
+    ivalue = int(value)
+    if ivalue < -1:
+        raise argparse.ArgumentTypeError("%s is an invalid positive int value" % value)
+    return ivalue
 
 
 def argparse_create_quit(subparsers: "argparse._SubParsersAction[argparse.ArgumentParser]") -> None:
@@ -214,7 +434,7 @@ def argparse_create_seek(subparsers: "argparse._SubParsersAction[argparse.Argume
         metavar="TIME",
         help="Time string (see TIME format)",
     )
-    subparse.set_defaults(func=lambda args: time_relative_set(args.time_delta))
+    subparse.set_defaults(func=lambda args: cmd_seek(args.time_delta))
 
 
 def argparse_create_add(subparsers: "argparse._SubParsersAction[argparse.ArgumentParser]") -> None:
@@ -233,7 +453,46 @@ def argparse_create_add(subparsers: "argparse._SubParsersAction[argparse.Argumen
         metavar="FILES",
         help="One or more file-paths, with support for paths relative to the current working directory.",
     )
-    subparse.set_defaults(func=lambda args: playlist_files_add(args.files, args.replace))
+    subparse.set_defaults(func=lambda args: cmd_add(args.files, args.replace))
+
+
+def argparse_create_stash(subparsers: "argparse._SubParsersAction[argparse.ArgumentParser]") -> None:
+    subparse = subparsers.add_parser("stash", help="Stash the current state and clear the playlist.")
+    subparse.set_defaults(func=lambda args: cmd_stash_push())
+
+    subsubparsers = subparse.add_subparsers(
+        title="sub-sub-commands",
+        description="valid stash sub-commands",
+        help="Stash additional help",
+    )
+
+    def stash_index_arg(subparse: "argparse.ArgumentParser") -> None:
+        subparse.add_argument(
+            dest="index",
+            type=ensure_non_negative_int,
+            default=0,
+            metavar="INDEX",
+            help="The index to pop (pop the last pushed when omitted).",
+        )
+
+    # Stash `list`.
+    subparse = subsubparsers.add_parser("list", help="List stashes.")
+    subparse.set_defaults(func=lambda args: cmd_stash_list())
+
+    # Stash `drop`.
+    subparse = subsubparsers.add_parser("drop", help="Drop the last stash, optionally by index.")
+    stash_index_arg(subparse)
+    subparse.set_defaults(func=lambda args: cmd_stash_drop(args.index))
+
+    # Stash `pop`.
+    subparse = subsubparsers.add_parser("pop", help="Pop the stash (removing it from the file-system).")
+    stash_index_arg(subparse)
+    subparse.set_defaults(func=lambda args: cmd_stash_pop(args.index))
+
+    # Stash `peek`.
+    subparse = subsubparsers.add_parser("peek", help="Load the stash (without removing it).")
+    stash_index_arg(subparse)
+    subparse.set_defaults(func=lambda args: cmd_stash_peek(args.index))
 
 
 def argparse_create_trash_current(subparsers: "argparse._SubParsersAction[argparse.ArgumentParser]") -> None:
@@ -241,7 +500,7 @@ def argparse_create_trash_current(subparsers: "argparse._SubParsersAction[argpar
         "trash-current",
         help="Move the file that is currently playing to the trash.",
     )
-    subparse.set_defaults(func=lambda args: playlist_trash_current())
+    subparse.set_defaults(func=lambda args: cmd_trash_current())
 
 
 # -----------------------------------------------------------------------------
@@ -269,6 +528,9 @@ def argparse_create(is_help: bool) -> argparse.ArgumentParser:
     argparse_create_seek(subparsers, is_help)
 
     argparse_create_add(subparsers)
+
+    argparse_create_stash(subparsers)
+
     argparse_create_trash_current(subparsers)
 
     return parser
@@ -279,6 +541,11 @@ def argparse_create(is_help: bool) -> argparse.ArgumentParser:
 
 
 def main() -> None:
+
+    # # HACK: add a default positional argument?
+    if len(sys.argv) > 1 and sys.argv[-2] == "stash" and sys.argv[-1] in {"pop", "drop", "peek"}:
+        sys.argv.append("-1")
+
     is_help = "--help" in sys.argv
     parser = argparse_create(is_help)
     args = parser.parse_args()

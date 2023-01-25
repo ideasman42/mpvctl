@@ -72,6 +72,7 @@ subcommands:
   :prev:                Play the previous item in the playlist.
   :seek:                Seek relative to the current playback position.
   :add:                 Add file(s) to the playlist.
+  :stash:               Stash the current state and clear the playlist.
   :trash-current:       Move the file that is currently playing to the trash.
 
 Subcommand: ``quit``
@@ -162,6 +163,25 @@ options:
   -h, --help  show this help message and exit
   --replace   Replace the current playlist instead of adding to the current
               playlist.
+
+Subcommand: ``stash``
+---------------------
+
+usage::
+
+       mpvctl stash [-h] {list,drop,pop,peek} ...
+
+options:
+  -h, --help            show this help message and exit
+
+sub-sub-commands:
+  valid stash sub-commands
+
+  {list,drop,pop,peek}  Stash additional help
+    list                List stashes.
+    drop                Drop the last stash, optionally by index.
+    pop                 Pop the stash (removing it from the file-system).
+    peek                Load the stash (without removing it).
 
 Subcommand: ``trash-current``
 -----------------------------
