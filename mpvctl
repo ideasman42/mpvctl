@@ -350,7 +350,17 @@ def stash_pop_impl(index: int, play: bool = True, remove: bool = True) -> None:
         if play:
             stash_data = stash_file_read(filepath)
             description = stash_data["description"]
-            print("Pop", description)
+
+            if remove:
+                if play:
+                    action = "Pop"
+                else:
+                    action = "Drop"
+            else:
+                action = "Peek"
+
+            print(action, description)
+            del action
 
             playlist_files = stash_data["files"]
             playlist_index = stash_data["playlist-pos"]
