@@ -187,6 +187,10 @@ def cmd_add(files: Sequence[str], replace: bool) -> None:
     files = [os.path.abspath(filepath) for filepath in files]
     playlist_files_add(files, replace)
 
+    # If adding while remaining paused is useful, it could be an option.
+    # For now always disable pause since it's annoying when adding new content.
+    command(("set", "pause", "no"))
+
 
 def playlist_index_set(index: int) -> None:
     json_str = '{{"command": ["playlist-play-index", {:d}]}}\n'.format(index)
