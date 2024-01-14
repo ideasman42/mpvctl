@@ -415,12 +415,12 @@ def argparse_create_quit(subparsers: "argparse._SubParsersAction[argparse.Argume
 
 def argparse_create_play(subparsers: "argparse._SubParsersAction[argparse.ArgumentParser]") -> None:
     subparse = subparsers.add_parser("play", help="Start playing.")
-    subparse.set_defaults(func=lambda args: command(("set", "pause", "yes")))
+    subparse.set_defaults(func=lambda args: command(("set", "pause", "no")))
 
 
 def argparse_create_pause(subparsers: "argparse._SubParsersAction[argparse.ArgumentParser]") -> None:
     subparse = subparsers.add_parser("pause", help="Stop playing.")
-    subparse.set_defaults(func=lambda args: command(("set", "pause", "no")))
+    subparse.set_defaults(func=lambda args: command(("set", "pause", "yes")))
 
 
 def argparse_create_play_pause(subparsers: "argparse._SubParsersAction[argparse.ArgumentParser]") -> None:
