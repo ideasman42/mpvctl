@@ -246,7 +246,7 @@ def stash_description_create(
 
     userdir = os.path.expanduser("~").rstrip(os.sep)
     if commonpath.startswith(userdir):
-        commonpath = "~" + commonpath[len(userdir) :]
+        commonpath = "~" + commonpath[len(userdir):]
 
     # Only include the track number when not playing a single file.
     if len(playlist_files) > 1:
@@ -285,7 +285,7 @@ def stash_iter_with_internal_num() -> Generator[Tuple[int, str], None, None]:
         for entry in os.scandir(STASH_DIR):
             name = entry.name
             if name.startswith(STASH_BASE) and name.endswith(STASH_EXT):
-                num = name[len(STASH_BASE) : -len(STASH_EXT)]
+                num = name[len(STASH_BASE): -len(STASH_EXT)]
                 if is_hex(num):
                     yield int(num, 16), entry.path
 
