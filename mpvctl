@@ -84,23 +84,31 @@ def time_string_parse(time_str: str) -> float:
     return time_eval
 
 
-def move_to_trash(filepath: str) -> None:
+def delete_soft(filepath: str) -> None:
     subprocess.check_call(["gio", "trash", filepath])
 
 
 # -----------------------------------------------------------------------------
 # MPV Generic Utilities
 
-SOCKET = "/tmp/mpvsocket"
+# Set in `main()`.
+SOCKET_CMD: Tuple[str, ...] = ()
 
-SOCKET_CMD: Tuple[str, ...] = ("",)
-if shutil.which("socat"):
-    SOCKET_CMD = ("socat", "-", SOCKET)
-elif shutil.which("nc"):
-    SOCKET_CMD = ("nc", "-U", "-N", SOCKET)
-else:
-    sys.stderr.write('Cannot find "socat" or "nc" on your $PATH.')
-    sys.exit(1)
+
+def socket_command_set_or_exit() -> Tuple[str, ...]:
+    import tempfile
+    # Typically: `/tmp/mpvsocket`.
+    socket_dir = os.path.join(tempfile.gettempdir(), "mpvsocket")
+
+    socket_cmd: Tuple[str, ...] = ()
+    if shutil.which("socat"):
+        socket_cmd = ("socat", "-", socket_dir)
+    elif shutil.which("nc"):
+        socket_cmd = ("nc", "-U", "-N", socket_dir)
+    else:
+        sys.stderr.write('Cannot find "socat" or "nc" on your $PATH.')
+        sys.exit(1)
+    return socket_cmd
 
 
 def socket_command(json_str: str) -> str:
@@ -173,7 +181,7 @@ def cmd_trash_current() -> None:
     )
 
     filepath = result_path["data"]
-    move_to_trash(filepath)
+    delete_soft(filepath)
 
 
 def playlist_files_add(files: Sequence[str], replace: bool) -> None:
@@ -517,8 +525,8 @@ def argparse_create_stash(subparsers: "argparse._SubParsersAction[argparse.Argum
 
 def argparse_create_trash_current(subparsers: "argparse._SubParsersAction[argparse.ArgumentParser]") -> None:
     subparse = subparsers.add_parser(
-        "trash-current",
-        help="Move the file that is currently playing to the trash.",
+        "delete-current",
+        help="Delete the file that is currently playing (using the systems \"trash\").",
     )
     subparse.set_defaults(func=lambda args: cmd_trash_current())
 
@@ -528,6 +536,9 @@ def argparse_create_trash_current(subparsers: "argparse._SubParsersAction[argpar
 
 
 def argparse_create(is_help: bool) -> argparse.ArgumentParser:
+    global SOCKET_CMD
+    SOCKET_CMD = socket_command_set_or_exit()
+
     parser = argparse.ArgumentParser(
         description=__doc__,
         formatter_class=argparse.RawTextHelpFormatter,
@@ -561,8 +572,7 @@ def argparse_create(is_help: bool) -> argparse.ArgumentParser:
 
 
 def main() -> None:
-
-    # # HACK: add a default positional argument?
+    # HACK: add a default positional argument?
     if len(sys.argv) > 1 and sys.argv[-2] == "stash" and sys.argv[-1] in {"pop", "drop", "peek"}:
         sys.argv.append("0")
 
@@ -570,7 +580,7 @@ def main() -> None:
     parser = argparse_create(is_help)
     args = parser.parse_args()
 
-    # call subparser callback
+    # Call sub-parser callback.
     if not hasattr(args, "func"):
         parser.print_help()
         return

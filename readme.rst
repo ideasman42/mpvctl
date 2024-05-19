@@ -73,7 +73,7 @@ subcommands:
   :seek:                Seek relative to the current playback position.
   :add:                 Add file(s) to the playlist.
   :stash:               Stash the current state and clear the playlist.
-  :trash-current:       Move the file that is currently playing to the trash.
+  :delete-current:      Delete the file that is currently playing (using the systems "trash").
 
 Subcommand: ``quit``
 --------------------
@@ -183,12 +183,12 @@ sub-sub-commands:
     pop                 Pop the stash (removing it from the file-system).
     peek                Load the stash (without removing it).
 
-Subcommand: ``trash-current``
------------------------------
+Subcommand: ``delete-current``
+------------------------------
 
 usage::
 
-       mpvctl trash-current [-h]
+       mpvctl delete-current [-h]
 
 options:
   -h, --help  show this help message and exit
