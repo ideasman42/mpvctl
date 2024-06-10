@@ -29,6 +29,7 @@ from typing import (
     Tuple,
 )
 
+
 # -----------------------------------------------------------------------------
 # Generic Utilities
 
@@ -229,9 +230,17 @@ def playlist_index_set(index: int) -> None:
 # -----------------------------------------------------------------------------
 # MPV Stash Push Pop
 
-STASH_DIR = os.path.expanduser("~/.local/share/mpvctl/stash")
 STASH_BASE = "mpv_stash_"
 STASH_EXT = ".pickle"
+
+
+def stash_dir_get() -> str:
+    xdg_data_home = (
+        os.environ.get("XDG_DATA_HOME") or
+        os.path.join(os.path.normpath(os.path.expanduser("~")), ".local", "share")
+    )
+
+    return os.path.join(xdg_data_home, "mpvctl", "stash")
 
 
 def stash_unique_time_hex() -> str:
@@ -247,7 +256,7 @@ def is_hex(text: str) -> bool:
 
 
 def stash_filename_create() -> str:
-    return os.path.join(STASH_DIR, STASH_BASE) + stash_unique_time_hex() + STASH_EXT
+    return os.path.join(stash_dir_get(), STASH_BASE) + stash_unique_time_hex() + STASH_EXT
 
 
 def stash_description_create(
@@ -302,8 +311,9 @@ def stash_file_write(filepath: str, data: StashType) -> None:
 
 
 def stash_iter_with_internal_num() -> Generator[Tuple[int, str], None, None]:
-    if os.path.exists(STASH_DIR):
-        for entry in os.scandir(STASH_DIR):
+    stash_dir = stash_dir_get()
+    if os.path.exists(stash_dir):
+        for entry in os.scandir(stash_dir):
             name = entry.name
             if name.startswith(STASH_BASE) and name.endswith(STASH_EXT):
                 num = name[len(STASH_BASE): -len(STASH_EXT)]
@@ -359,8 +369,9 @@ def cmd_stash_push() -> None:
         "playback-time": playback_time,
     }
 
-    if not os.path.exists(STASH_DIR):
-        os.makedirs(STASH_DIR)
+    stash_dir = stash_dir_get()
+    if not os.path.exists(stash_dir):
+        os.makedirs(stash_dir)
 
     stash_file_write(filepath, stash_data)
 
