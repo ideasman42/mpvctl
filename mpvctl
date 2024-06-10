@@ -237,7 +237,7 @@ STASH_EXT = ".pickle"
 def stash_unique_time_hex() -> str:
     import datetime
 
-    return hex(int((datetime.datetime.utcnow() - datetime.datetime(2020, 1, 1)).total_seconds() * 100))[2:]
+    return hex(int((datetime.datetime.now() - datetime.datetime(2020, 1, 1)).total_seconds() * 100))[2:]
 
 
 def is_hex(text: str) -> bool:
