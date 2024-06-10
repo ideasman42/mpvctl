@@ -245,8 +245,10 @@ def stash_dir_get() -> str:
 
 def stash_unique_time_hex() -> str:
     import datetime
-
-    return "{:x}".format(int((datetime.datetime.now() - datetime.datetime(2020, 1, 1)).total_seconds() * 100))
+    tz = datetime.timezone.utc
+    time_ref = datetime.datetime(2020, 1, 1, tzinfo=tz)
+    time_now = datetime.datetime.now(tz=tz)
+    return "{:x}".format(int((time_now - time_ref).total_seconds() * 100))
 
 
 def is_hex(text: str) -> bool:
