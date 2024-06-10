@@ -153,7 +153,7 @@ Subcommand: ``add``
 
 usage::
 
-       mpvctl add [-h] [--replace] FILES [FILES ...]
+       mpvctl add [-h] [--replace] [--change] FILES [FILES ...]
 
 positional arguments:
   FILES       One or more file-paths, with support for paths relative to the
@@ -163,6 +163,8 @@ options:
   -h, --help  show this help message and exit
   --replace   Replace the current playlist instead of adding to the current
               playlist.
+  --change    Change the track to the newly added files (ignored when
+              ``--replace`` is passed in).
 
 Subcommand: ``stash``
 ---------------------

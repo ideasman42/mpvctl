@@ -189,11 +189,32 @@ def playlist_files_add(files: Sequence[str], replace: bool) -> None:
         command(("loadfile", filepath, "replace" if (replace and i == 0) else "append-play"))
 
 
-def cmd_add(files: Sequence[str], replace: bool) -> None:
+def cmd_add(files: Sequence[str], replace: bool, change: bool) -> None:
     # Without this, it's not convenient to add files in the current directory for e.g.
     # Which is common when passing `*` for e.g.
+
+    if replace:
+        # Implied, no special logic needed.
+        change = False
+
+    playlist_count = 0
+    if change:
+        result_list = socket_command_list_as_json_data(
+            (
+                '{"command": ["get_property", "playlist-count"]}\n',
+            )
+        )
+        playlist_count = result_list[0]["data"]
+        # If the playlist is empty, simply use replace logic.
+        if playlist_count == 0:
+            replace = True
+            change = False
+
     files = [os.path.abspath(filepath) for filepath in files]
     playlist_files_add(files, replace)
+
+    if change:
+        playlist_index_set(playlist_count)
 
     # If adding while remaining paused is useful, it could be an option.
     # For now always disable pause since it's annoying when adding new content.
@@ -476,12 +497,20 @@ def argparse_create_add(subparsers: "argparse._SubParsersAction[argparse.Argumen
         help="Replace the current playlist instead of adding to the current playlist.",
     )
     subparse.add_argument(
+        "--change",
+        dest="change",
+        default=False,
+        action="store_true",
+        required=False,
+        help="Change the track to the newly added files (ignored when ``--replace`` is passed in).",
+    )
+    subparse.add_argument(
         dest="files",
         nargs="+",
         metavar="FILES",
         help="One or more file-paths, with support for paths relative to the current working directory.",
     )
-    subparse.set_defaults(func=lambda args: cmd_add(args.files, args.replace))
+    subparse.set_defaults(func=lambda args: cmd_add(args.files, args.replace, args.change))
 
 
 def argparse_create_stash(subparsers: "argparse._SubParsersAction[argparse.ArgumentParser]") -> None:
