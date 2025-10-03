@@ -23,10 +23,10 @@ import sys
 
 from typing import (
     Any,
-    Dict,
+)
+from collections.abc import (
     Generator,
     Sequence,
-    Tuple,
 )
 
 
@@ -93,15 +93,15 @@ def delete_soft(filepath: str) -> None:
 # MPV Generic Utilities
 
 # Set in `main()`.
-SOCKET_CMD: Tuple[str, ...] = ()
+SOCKET_CMD: tuple[str, ...] = ()
 
 
-def socket_command_set_or_exit() -> Tuple[str, ...]:
+def socket_command_set_or_exit() -> tuple[str, ...]:
     import tempfile
     # Typically: `/tmp/mpvsocket`.
     socket_dir = os.path.join(tempfile.gettempdir(), "mpvsocket")
 
-    socket_cmd: Tuple[str, ...] = ()
+    socket_cmd: tuple[str, ...] = ()
     if shutil.which("socat"):
         socket_cmd = ("socat", "-", socket_dir)
     elif shutil.which("nc"):
@@ -125,14 +125,14 @@ def socket_command_list(json_str: Sequence[str]) -> Sequence[str]:
     return result.rstrip("\n").rsplit("\n")
 
 
-def socket_command_as_json_data(json_str: str) -> Dict[str, Any]:
+def socket_command_as_json_data(json_str: str) -> dict[str, Any]:
     result = socket_command(json_str)
     result_dict = json.loads(result)
     assert isinstance(result_dict, dict)
     return result_dict
 
 
-def socket_command_list_as_json_data(json_str_list: Sequence[str]) -> Sequence[Dict[str, Any]]:
+def socket_command_list_as_json_data(json_str_list: Sequence[str]) -> Sequence[dict[str, Any]]:
     result_list = socket_command_list(json_str_list)
     return [json.loads(result) for result in result_list]
 
@@ -294,7 +294,7 @@ def stash_description_create(
     )
 
 
-StashType = Dict[str, Any]
+StashType = dict[str, Any]
 
 
 def stash_file_read(filepath: str) -> StashType:
@@ -312,7 +312,7 @@ def stash_file_write(filepath: str, data: StashType) -> None:
         pickle.dump(data, fh)
 
 
-def stash_iter_with_internal_num() -> Generator[Tuple[int, str], None, None]:
+def stash_iter_with_internal_num() -> Generator[tuple[int, str], None, None]:
     stash_dir = stash_dir_get()
     if os.path.exists(stash_dir):
         for entry in os.scandir(stash_dir):
@@ -323,7 +323,7 @@ def stash_iter_with_internal_num() -> Generator[Tuple[int, str], None, None]:
                     yield int(num, 16), entry.path
 
 
-def stash_iter_with_index() -> Generator[Tuple[int, str], None, None]:
+def stash_iter_with_index() -> Generator[tuple[int, str], None, None]:
     for index, (_num_val, path) in enumerate(sorted(stash_iter_with_internal_num(), reverse=True)):
         yield index, path
 
